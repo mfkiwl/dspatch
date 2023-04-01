@@ -206,7 +206,7 @@ void Circuit::DisconnectComponent( int componentIndex )
     ResumeAutoTick();
 }
 
-void Circuit::SetBufferCount( int bufferCount )
+void Circuit::SetBufferCount( int bufferCount, int threadsPerBuffer )
 {
     if ( (size_t)bufferCount != p->circuitThreads.size() )
     {
@@ -224,7 +224,7 @@ void Circuit::SetBufferCount( int bufferCount )
         // initialise and start all threads
         for ( size_t i = 0; i < p->circuitThreads.size(); ++i )
         {
-            p->circuitThreads[i].Start( &p->components, (int)i );
+            p->circuitThreads[i].Start( &p->components, (int)i, threadsPerBuffer );
         }
 
         // set all components to the new buffer count
@@ -239,6 +239,7 @@ void Circuit::SetBufferCount( int bufferCount )
     }
 }
 
+// cppcheck-suppress unusedFunction
 int Circuit::GetBufferCount() const
 {
     return (int)p->circuitThreads.size();

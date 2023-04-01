@@ -87,7 +87,7 @@ public:
     void DisconnectComponent( const Component::SCPtr& component );
     void DisconnectComponent( int componentIndex );
 
-    void SetBufferCount( int bufferCount );
+    void SetBufferCount( int bufferCount, int threadsPerBuffer = 1 );
     int GetBufferCount() const;
 
     void Tick( Component::TickMode mode = Component::TickMode::Series );

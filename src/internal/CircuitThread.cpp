@@ -44,132 +44,171 @@ CircuitThread::~CircuitThread()
     Stop();
 }
 
-void CircuitThread::Start( std::vector<DSPatch::Component::SPtr>* components, int threadNo )
+void CircuitThread::Start( std::vector<DSPatch::Component::SPtr>* components, int bufferNo, int threadsPerBuffer )
 {
-    if ( !_stopped )
+    for ( const auto& thread : _threads )
     {
-        return;
+        if ( !thread.stopped )
+        // cppcheck-suppress useStlAlgorithm
+        {
+            return;
+        }
     }
 
     _components = components;
-    _threadNo = threadNo;
+    _bufferNo = bufferNo;
 
-    _stop = false;
-    _stopped = false;
-    _gotResume = false;
-    _gotSync = false;
+    _threads.resize( threadsPerBuffer );
+    for ( size_t i = 0; i < _threads.size(); ++i )
+    {
+        _threads[i].stop = false;
+        _threads[i].stopped = false;
+        _threads[i].gotResume = false;
+        _threads[i].gotSync = false;
 
-    _thread = std::thread( &CircuitThread::_Run, this );
+        _threads[i].thread = std::thread( &CircuitThread::_Run, this, &_threads[i] );
+    }
 }
 
 void CircuitThread::Stop()
 {
-    if ( _stopped )
+    for ( const auto& thread : _threads )
     {
-        return;
+        if ( thread.stopped )
+        // cppcheck-suppress useStlAlgorithm
+        {
+            return;
+        }
     }
 
     Sync();
 
-    _stop = true;
+    for ( auto& thread : _threads )
+    {
+        thread.stop = true;
+    }
 
     SyncAndResume( _mode );
 
-    if ( _thread.joinable() )
+    for ( auto& thread : _threads )
     {
-        _thread.join();
+        if ( thread.thread.joinable() )
+        {
+            thread.thread.join();
+        }
     }
 }
 
 void CircuitThread::Sync()
 {
-    if ( _stopped || _gotSync )
+    for ( auto& thread : _threads )
     {
-        return;
-    }
+        if ( thread.stopped )
+        {
+            return;
+        }
 
-    std::unique_lock<std::mutex> lock( _resumeMutex );
+        if ( thread.gotSync )
+        {
+            continue;
+        }
 
-    // cppcheck-suppress knownConditionTrueFalse
-    if ( !_gotSync )              // if haven't already got sync
-    {
-        _syncCondt.wait( lock );  // wait for sync
+        std::unique_lock<std::mutex> lock( thread.resumeMutex );
+
+        if ( !thread.gotSync )              // if haven't already got sync
+        {
+            thread.syncCondt.wait( lock );  // wait for sync
+        }
     }
 }
 
 void CircuitThread::SyncAndResume( DSPatch::Component::TickMode mode )
 {
-    if ( _stopped )
+    for ( auto& thread : _threads )
     {
-        return;
+        if ( thread.stopped )
+        {
+            return;
+        }
+
+        if ( thread.gotSync )
+        {
+            std::lock_guard<std::mutex> lock( thread.resumeMutex );
+            thread.gotSync = false;  // reset the sync flag
+            continue;
+        }
+
+        std::unique_lock<std::mutex> lock( thread.resumeMutex );
+
+        if ( !thread.gotSync )              // if haven't already got sync
+        {
+            thread.syncCondt.wait( lock );  // wait for sync
+        }
+        thread.gotSync = false;             // reset the sync flag
     }
-
-    if ( _gotSync )
-    {
-        std::lock_guard<std::mutex> lock( _resumeMutex );
-        _gotSync = false;   // reset the sync flag
-
-        _gotResume = true;  // set the resume flag
-        _resumeCondt.notify_all();
-        return;
-    }
-
-    std::unique_lock<std::mutex> lock( _resumeMutex );
-
-    if ( !_gotSync )              // if haven't already got sync
-    {
-        _syncCondt.wait( lock );  // wait for sync
-    }
-    _gotSync = false;             // reset the sync flag
 
     _mode = mode;
 
-    _gotResume = true;  // set the resume flag
-    _resumeCondt.notify_all();
+    for ( auto& thread : _threads )
+    {
+        thread.gotResume = true;  // set the resume flag
+        thread.resumeCondt.notify_all();
+    }
 }
 
-void CircuitThread::_Run()
+void CircuitThread::_Run( Thread* thread )
 {
     if ( _components != nullptr )
     {
-        while ( !_stop )
         {
+            std::unique_lock<std::mutex> lock( thread->resumeMutex );
+
+            thread->gotSync = true;  // set the sync flag
+            thread->syncCondt.notify_all();
+
+            if ( !thread->gotResume )              // if haven't already got resume
             {
-                std::unique_lock<std::mutex> lock( _resumeMutex );
+                thread->resumeCondt.wait( lock );  // wait for resume
+            }
+            thread->gotResume = false;             // reset the resume flag
+        }
 
-                _gotSync = true;  // set the sync flag
-                _syncCondt.notify_all();
+        while ( !thread->stop )
+        {
+            // You might be thinking: Can't we have each thread start on a different component?
 
-                if ( !_gotResume )              // if haven't already got resume
-                {
-                    _resumeCondt.wait( lock );  // wait for resume
-                }
-                _gotResume = false;             // reset the resume flag
+            // Well no. Because threadNo == bufferNo, in order to maintain synchronisation
+            // within the circuit, when a component wants to process its buffers in-order, it
+            // requires that every other in-order component in the system has not only
+            // processed its buffers in the same order, but has processed the same number of
+            // buffers too.
+
+            // E.g. 1,2,3 and 1,2,3. Not 1,2,3 and 2,3,1,2,3.
+
+            for ( auto& component : *_components )
+            {
+                component->Tick( _mode, _bufferNo );
             }
 
-            if ( !_stop )
             {
-                // You might be thinking: Can't we have each thread start on a different component?
+                std::unique_lock<std::mutex> lock( thread->resumeMutex );
 
-                // Well no. Because threadNo == bufferNo, in order to maintain synchronisation
-                // within the circuit, when a component wants to process its buffers in-order, it
-                // requires that every other in-order component in the system has not only
-                // processed its buffers in the same order, but has processed the same number of
-                // buffers too.
+                thread->gotSync = true;  // set the sync flag
+                thread->syncCondt.notify_all();
 
-                // E.g. 1,2,3 and 1,2,3. Not 1,2,3 and 2,3,1,2,3.
-
-                for ( auto& component : *_components )
+                if ( !thread->gotResume )              // if haven't already got resume
                 {
-                    component->Tick( _mode, _threadNo );
+                    thread->resumeCondt.wait( lock );  // wait for resume
                 }
-                for ( auto& component : *_components )
-                {
-                    component->Reset( _threadNo );
-                }
+                thread->gotResume = false;             // reset the resume flag
+            }
+
+            for ( auto& component : *_components )
+            {
+                component->Reset( _bufferNo );
             }
         }
     }
 
-    _stopped = true;
+    thread->stopped = true;
 }

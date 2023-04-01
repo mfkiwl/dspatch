@@ -67,25 +67,30 @@ public:
     CircuitThread( CircuitThread&& );
     ~CircuitThread();
 
-    void Start( std::vector<DSPatch::Component::SPtr>* components, int threadNo );
+    void Start( std::vector<DSPatch::Component::SPtr>* components, int bufferNo, int threadsPerBuffer );
     void Stop();
     void Sync();
     void SyncAndResume( DSPatch::Component::TickMode mode );
 
 private:
-    void _Run();
+    struct Thread
+    {
+        std::thread thread;
+        bool stop = false;
+        bool stopped = true;
+        bool gotResume = false;
+        bool gotSync = true;
+        std::mutex resumeMutex;
+        std::condition_variable resumeCondt, syncCondt;
+    };
+
+    void _Run( Thread* thread );
 
 private:
     DSPatch::Component::TickMode _mode = DSPatch::Component::TickMode::Series;
-    std::thread _thread;
     std::vector<DSPatch::Component::SPtr>* _components = nullptr;
-    int _threadNo = 0;
-    bool _stop = false;
-    bool _stopped = true;
-    bool _gotResume = false;
-    bool _gotSync = true;
-    std::mutex _resumeMutex;
-    std::condition_variable _resumeCondt, _syncCondt;
+    int _bufferNo = 0;
+    std::deque<Thread> _threads;
 };
 
 }  // namespace internal

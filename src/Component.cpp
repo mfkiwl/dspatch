@@ -87,6 +87,8 @@ public:
 
     std::vector<std::string> inputNames;
     std::vector<std::string> outputNames;
+
+    std::deque<std::mutex> tickMutexes;
 };
 
 }  // namespace internal
@@ -224,6 +226,8 @@ void Component::SetBufferCount( int bufferCount )
     p->refs.resize( bufferCount );
     p->refMutexes.resize( bufferCount );
 
+    p->tickMutexes.resize( bufferCount );
+
     // init vector values
     for ( int i = 0; i < bufferCount; ++i )
     {
@@ -258,6 +262,8 @@ int Component::GetBufferCount() const
 
 bool Component::Tick( Component::TickMode mode, int bufferNo )
 {
+    std::lock_guard<std::mutex> lock( p->tickMutexes[bufferNo] );
+
     // continue only if this component has not already been ticked
     if ( p->tickStatuses[bufferNo] == internal::Component::TickStatus::NotTicked )
     {
