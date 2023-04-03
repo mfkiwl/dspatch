@@ -31,6 +31,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <dspatch/Component.h>
 
 #include <condition_variable>
+#include <deque>
 #include <thread>
 
 namespace DSPatch
