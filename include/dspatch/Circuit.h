@@ -106,6 +106,8 @@ public:
 
     void Optimize();
 
+    void TickParallel( int bufferNo, int threadNo, int threadCount );
+
 private:
     class AutoTickThread final
     {
@@ -634,11 +636,6 @@ inline void Circuit::SetThreadCount( int threadCount )
 {
     PauseAutoTick();
 
-    if ( _threadCount == 0 && threadCount != 0 )
-    {
-        _circuitDirty = true;
-    }
-
     _threadCount = threadCount;
 
     // stop all threads
@@ -779,6 +776,14 @@ inline void Circuit::Optimize()
     }
 }
 
+inline void Circuit::TickParallel( int bufferNo, int threadNo, int threadCount )
+{
+    for ( auto it = _componentsParallel.begin() + threadNo; it < _componentsParallel.end(); it += threadCount )
+    {
+        ( *it )->TickParallel( bufferNo );
+    }
+}
+
 inline void Circuit::_Optimize()
 {
     // scan for optimal series order -> update _components
@@ -799,27 +804,24 @@ inline void Circuit::_Optimize()
     }
 
     // scan for optimal parallel order -> update _componentsParallel
-    if ( _threadCount != 0 )
+    std::vector<std::vector<DSPatch::Component*>> componentsMap;
+    componentsMap.reserve( _components.size() );
+
+    int scanPosition;
+    for ( auto component : _components )
     {
-        std::vector<std::vector<DSPatch::Component*>> componentsMap;
-        componentsMap.reserve( _components.size() );
+        component->ScanParallel( componentsMap, scanPosition );
+    }
+    for ( auto component : _components )
+    {
+        component->EndScan();
+    }
 
-        int scanPosition;
-        for ( auto component : _components )
-        {
-            component->ScanParallel( componentsMap, scanPosition );
-        }
-        for ( auto component : _components )
-        {
-            component->EndScan();
-        }
-
-        _componentsParallel.clear();
-        _componentsParallel.reserve( _components.size() );
-        for ( auto& componentsMapEntry : componentsMap )
-        {
-            _componentsParallel.insert( _componentsParallel.end(), componentsMapEntry.begin(), componentsMapEntry.end() );
-        }
+    _componentsParallel.clear();
+    _componentsParallel.reserve( _components.size() );
+    for ( auto& componentsMapEntry : componentsMap )
+    {
+        _componentsParallel.insert( _componentsParallel.end(), componentsMapEntry.begin(), componentsMapEntry.end() );
     }
 
     // clear _circuitDirty flag
