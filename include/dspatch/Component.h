@@ -107,52 +107,6 @@ protected:
     void SetOutputCount_( int outputCount, const std::vector<std::string>& outputNames = {} );
 
 private:
-#ifdef DSPATCH_NO_STD_ATOMIC_FLAG
-
-    class AtomicFlag final
-    {
-    public:
-        AtomicFlag( const AtomicFlag& ) = delete;
-        AtomicFlag& operator=( const AtomicFlag& ) = delete;
-
-        inline AtomicFlag() = default;
-
-        // cppcheck-suppress missingMemberCopy
-        inline AtomicFlag( AtomicFlag&& )
-        {
-        }
-
-        inline void WaitAndClear()
-        {
-            std::lock_guard<std::mutex> lock2( _mutex );
-            std::unique_lock<std::mutex> lock( _syncMutex );
-            if ( !_gotSync )  // if haven't already got sync
-            {
-                _syncCondt.wait( lock );  // wait for sync
-            }
-            _gotSync = false;
-        }
-
-        inline void Set()
-        {
-            std::lock_guard<std::mutex> lock( _syncMutex );
-            _gotSync = true;  // set the sync flag
-            _syncCondt.notify_all();
-        }
-
-        inline void Clear()
-        {
-            _gotSync = false;
-        }
-
-    private:
-        bool _gotSync = false;
-        std::mutex _mutex, _syncMutex;
-        std::condition_variable _syncCondt;
-    };
-
-#else
-
     class AtomicFlag final
     {
     public:
@@ -186,8 +140,6 @@ private:
     private:
         std::atomic_flag flag = { true };  // true here actually means unset / cleared
     };
-
-#endif
 
     struct RefCounter final
     {
